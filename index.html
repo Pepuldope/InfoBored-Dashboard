@@ -146,7 +146,7 @@ html, body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 12px 18px;
+  padding: 16px 18px;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -165,7 +165,7 @@ html, body {
 }
 
 .stop-label {
-  font-size: 1.25rem;
+  font-size: 1.6rem;
   font-weight: 600;
   color: var(--text);
   white-space: nowrap;
@@ -173,14 +173,20 @@ html, body {
   text-overflow: ellipsis;
 }
 
-.stop-sublabel {
-  font-size: 0.95rem;
+.walk-info {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.walk-sublabel {
+  font-size: 0.85rem;
   color: var(--text-dim);
-  margin-top: 2px;
 }
 
 .walk-badge {
-  flex-shrink: 0;
   font-family: var(--font-mono);
   font-size: 1.4rem;
   font-weight: 700;
@@ -434,9 +440,11 @@ CONFIG.busStops.forEach(stop => {
       </svg>
       <div class="stop-info">
         <div class="stop-label">${stop.label}</div>
-        <div class="stop-sublabel">Walking distance</div>
       </div>
-      <div class="walk-badge">${stop.walkMinutes} min</div>
+      <div class="walk-info">
+        <div class="walk-sublabel">Walking distance</div>
+        <div class="walk-badge">${stop.walkMinutes} min</div>
+      </div>
     </div>
   `);
 });
