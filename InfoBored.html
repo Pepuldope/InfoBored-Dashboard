@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>InfoBoard</title>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     CONFIGURATION — edit these values before deploying
+     ═══════════════════════════════════════════════════════════════ -->
+<script>
+const CONFIG = {
+  // Your Google Calendar public embed URL
+  // How to get it: Google Calendar → Settings → [Your Calendar] → "Integrate calendar" → copy "Embed code" src URL
+  // Make sure the calendar is set to PUBLIC first, or shared with "everyone"
+  googleCalendarEmbedUrl: "https://calendar.google.com/calendar/embed?src=c_1e2c185f5675cb6fd7f712e8fde970195a48539fc5d6288578c137de9ade6bfd%40group.calendar.google.com&ctz=Europe%2FPrague&showTitle=0&showNav=0&showDate=0&showPrint=0&showTabs=0&showCalendars=0&showTz=0&mode=AGENDA",
+
+  // Bus stops: { label, walkMinutes, imhdStationId }
+  busStops: [
+    { label: "Námestie Hraničiarov", walkMinutes: 7, imhdId: "218" },
+    { label: "Šustekova",            walkMinutes: 5, imhdId: "374" },
+    { label: "Lachova",              walkMinutes: 5, imhdId: "162" },
+  ],
+
+  // QR code section
+  qrCodeUrl:   "https://pepotest.gj.sk/wp-content/uploads/2025/06/Infobored-QR-code.png",
+  qrCodeLabel: "Give us feedback!\nWe NEED it!",
+
+  // Timezone for clock sync
+  timezone: "Europe/Bratislava",
+
+  // How often to resync the clock with the internet (minutes)
+  clockSyncIntervalMin: 5,
+
+  // If an iframe hasn't loaded for this many hours, force-reload it
+  iframeStaleHours: 3,
+
+  // Midday full-page reload (hour in 24h format, 0 = disable)
+  reloadAtHour: 12,
+
+  // Organisation name shown in header
+  orgName: "InfoBoard",
+};
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     STYLES
+     ═══════════════════════════════════════════════════════════════ -->
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+:root {
+  --bg:          #080c10;
+  --surface:     #0e1420;
+  --surface2:    #141c2a;
+  --border:      #1e2d42;
+  --amber:       #f0a500;
+  --amber-dim:   #7a5200;
+  --blue:        #3d8fd6;
+  --text:        #d8e4f0;
+  --text-dim:    #6a8099;
+  --green:       #3dba6f;
+  --red:         #e84545;
+  --yellow:      #f0c040;
+  --font-mono:   'IBM Plex Mono', 'Courier New', monospace;
+  --font-sans:   'IBM Plex Sans', system-ui, sans-serif;
+  --radius:      6px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%; height: 100%;
+  background: var(--bg);
+  font-family: var(--font-sans);
+  color: var(--text);
+  overflow: hidden;
+}
+
+/* ── LAYOUT ─────────────────────────────────────────────────── */
+.board {
+  display: grid;
+  grid-template-columns: 1fr 260px;
+  grid-template-rows: auto auto 1fr;
+  gap: 10px;
+  /* 25px overscan compensation — keeps content away from screen edges
+     even when the TV resets its display settings after restart        */
+  padding: 25px;
+  width: 100vw;
+  height: 100vh;
+}
+
+/* ── HEADER ─────────────────────────────────────────────────── */
+.header {
+  grid-column: 1 / 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 24px;
+  height: 110px;
+}
+
+.org-name {
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.clock {
+  font-family: var(--font-mono);
+  font-size: 5rem;
+  font-weight: 700;
+  color: var(--amber);
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+.date-display {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  color: var(--text-dim);
+  text-align: right;
+  line-height: 1.5;
+}
+
+/* ── STOPS ROW ──────────────────────────────────────────────── */
+.stops-row {
+  grid-column: 1 / 2;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.stop-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.stop-icon {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  color: var(--text-dim);
+}
+
+.stop-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.stop-label {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stop-sublabel {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  margin-top: 1px;
+}
+
+.walk-badge {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 10%, transparent);
+  border: 1px solid var(--amber-dim);
+  border-radius: 4px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
+/* ── IFRAMES ROW ────────────────────────────────────────────── */
+.iframes-row {
+  grid-column: 1 / 2;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  min-height: 0;
+}
+
+.iframe-wrap {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.iframe-wrap iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  opacity: 0;
+}
+
+.iframe-wrap iframe.loaded {
+  opacity: 1;
+}
+
+.iframe-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  pointer-events: none;
+}
+
+.spinner {
+  width: 28px; height: 28px;
+  border: 2px solid var(--border);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: spin 1.2s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.iframe-overlay.hidden { display: none; }
+
+/* ── RIGHT COLUMN ───────────────────────────────────────────── */
+.right-col {
+  grid-column: 2 / 3;
+  grid-row: 1 / 4;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.calendar-panel {
+  flex: 1;
+  min-height: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-header {
+  padding: 12px 16px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface2);
+  flex-shrink: 0;
+}
+
+.panel-header span {
+  color: var(--blue);
+  margin-right: 8px;
+}
+
+.calendar-iframe-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.calendar-iframe-wrap iframe {
+  /* Google Calendar's embed renders at ~640px wide minimum.
+     We scale it down to fit our narrow column without clipping. */
+  width: 640px;
+  height: 160%;
+  border: 0;
+  display: block;
+  transform-origin: top left;
+  transform: scale(0.40625); /* 260/640 */
+}
+
+.calendar-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.calendar-placeholder code {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 8%, transparent);
+  padding: 6px 10px;
+  border-radius: 4px;
+  display: block;
+  margin-top: 6px;
+  word-break: break-all;
+}
+
+/* ── QR PANEL ───────────────────────────────────────────────── */
+.qr-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.qr-label {
+  flex: 1;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  line-height: 1.4;
+  white-space: pre-line;
+}
+
+.qr-img {
+  width: 80px;
+  height: 80px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  background: white;
+  padding: 4px;
+}
+
+/* ── HEALTH DOT ─────────────────────────────────────────────── */
+#healthDot {
+  position: fixed;
+  bottom: 8px;
+  right: 8px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--red);
+  z-index: 9999;
+  box-shadow: 0 0 6px currentColor;
+}
+</style>
+</head>
+<body>
+
+<div class="board">
+
+  <!-- ── HEADER ── -->
+  <header class="header">
+    <div class="org-name" id="orgName">InfoBoard</div>
+    <div class="clock" id="clock">--:--:--</div>
+    <div class="date-display" id="dateDisplay">—</div>
+  </header>
+
+  <!-- ── BUS STOP CARDS ── -->
+  <div class="stops-row" id="stopsRow">
+    <!-- populated by JS from CONFIG.busStops -->
+  </div>
+
+  <!-- ── IMHD IFRAMES ── -->
+  <div class="iframes-row" id="iframesRow">
+    <!-- populated by JS -->
+  </div>
+
+  <!-- ── RIGHT COLUMN ── -->
+  <aside class="right-col">
+    <div class="calendar-panel">
+      <div class="panel-header"><span>▸</span>Upcoming Events</div>
+      <div class="calendar-iframe-wrap" id="calendarWrap">
+        <!-- populated by JS -->
+      </div>
+    </div>
+    <div class="qr-panel" id="qrPanel">
+      <div class="qr-label" id="qrLabel"></div>
+      <img class="qr-img" id="qrImg" alt="QR Code">
+    </div>
+  </aside>
+
+</div>
+
+<!-- Health indicator -->
+<div id="healthDot"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SCRIPT
+     ═══════════════════════════════════════════════════════════════ -->
+<script>
+// ── INIT DOM FROM CONFIG ─────────────────────────────────────────
+
+document.getElementById('orgName').textContent = CONFIG.orgName;
+document.getElementById('qrLabel').textContent = CONFIG.qrCodeLabel;
+const qrImg = document.getElementById('qrImg');
+qrImg.src = CONFIG.qrCodeUrl;
+
+// Build stop cards
+const stopsRow = document.getElementById('stopsRow');
+CONFIG.busStops.forEach(stop => {
+  stopsRow.insertAdjacentHTML('beforeend', `
+    <div class="stop-card">
+      <svg class="stop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="5" r="2"/>
+        <path d="M12 7v5l-3 3M12 12l3 3M8 20h8M12 20v-5"/>
+      </svg>
+      <div class="stop-info">
+        <div class="stop-label">${stop.label}</div>
+        <div class="stop-sublabel">Walking distance</div>
+      </div>
+      <div class="walk-badge">${stop.walkMinutes} min</div>
+    </div>
+  `);
+});
+
+// Build iframe panels
+const iframesRow = document.getElementById('iframesRow');
+const iframeEls = [];
+CONFIG.busStops.forEach((stop, i) => {
+  const src = `https://imhd.sk/ba/online-zastavkova-tabula?theme=white&zoom=67&fullscreen=0&nthDisplay=0&minDisp=0&detectIdle=0&showClock=0&showInfoText=0&st=${stop.imhdId}`;
+  iframesRow.insertAdjacentHTML('beforeend', `
+    <div class="iframe-wrap" id="wrap${i}">
+      <div class="iframe-overlay" id="overlay${i}">
+        <div class="spinner"></div>
+        <span>${stop.label}</span>
+      </div>
+      <iframe data-src="${src}" data-idx="${i}" id="ifrm${i}" title="${stop.label}"></iframe>
+    </div>
+  `);
+  iframeEls.push(document.getElementById(`ifrm${i}`));
+});
+
+// Build calendar
+const calWrap = document.getElementById('calendarWrap');
+const isCalConfigured = CONFIG.googleCalendarEmbedUrl && !CONFIG.googleCalendarEmbedUrl.startsWith('YOUR_');
+if (isCalConfigured) {
+  calWrap.innerHTML = `<iframe src="${CONFIG.googleCalendarEmbedUrl}" style="width:100%;height:100%;border:0;" title="Calendar"></iframe>`;
+} else {
+  calWrap.innerHTML = `
+    <div class="calendar-placeholder">
+      <strong>📅 Calendar not configured</strong>
+      <div>To connect Google Calendar:</div>
+      <ol style="text-align:left;font-size:0.78rem;padding-left:18px;margin-top:4px;">
+        <li>Open Google Calendar</li>
+        <li>Settings → [Your Calendar] → Integrate calendar</li>
+        <li>Copy the embed &lt;iframe&gt; src URL</li>
+        <li>Paste it into CONFIG.googleCalendarEmbedUrl</li>
+      </ol>
+      <code>CONFIG.googleCalendarEmbedUrl = "https://calendar.google.com/calendar/embed?src=..."</code>
+    </div>`;
+}
+
+// ── CLOCK ─────────────────────────────────────────────────────────
+
+let syncedTime = null, syncedAt = null;
+
+async function syncClock() {
+  try {
+    const r = await fetch(`https://worldtimeapi.org/api/timezone/${CONFIG.timezone}`);
+    const d = await r.json();
+    syncedTime = new Date(d.datetime);
+    syncedAt   = Date.now();
+  } catch {
+    // keep last known sync or fall back to local
+    if (!syncedTime) { syncedTime = new Date(); syncedAt = Date.now(); }
+  }
+}
+
+const DAYS_SK   = ['nedeľa','pondelok','utorok','streda','štvrtok','piatok','sobota'];
+const MONTHS_SK = ['jan','feb','mar','apr','máj','jún','júl','aug','sep','okt','nov','dec'];
+
+function tickClock() {
+  if (!syncedTime) { requestAnimationFrame(tickClock); return; }
+  const now = new Date(syncedTime.getTime() + (Date.now() - syncedAt));
+
+  document.getElementById('clock').textContent =
+    now.toLocaleTimeString('sk-SK', { hour12: false });
+
+  document.getElementById('dateDisplay').innerHTML =
+    `${DAYS_SK[now.getDay()]}<br>${now.getDate()}. ${MONTHS_SK[now.getMonth()]} ${now.getFullYear()}`;
+
+  requestAnimationFrame(tickClock);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') syncClock();
+});
+
+(async () => {
+  await syncClock();
+  tickClock();
+  setInterval(syncClock, CONFIG.clockSyncIntervalMin * 60 * 1000);
+})();
+
+// ── HEALTH DOT ────────────────────────────────────────────────────
+
+const dot = document.getElementById('healthDot');
+function updateHealth() {
+  const online = navigator.onLine;
+  const anyLoading = iframeEls.some(f => !f.dataset.lastSuccess);
+  if (!online)          { dot.style.background = 'var(--red)';    dot.style.boxShadow = '0 0 6px var(--red)'; }
+  else if (anyLoading)  { dot.style.background = 'var(--yellow)'; dot.style.boxShadow = '0 0 6px var(--yellow)'; }
+  else                  { dot.style.background = 'var(--green)';  dot.style.boxShadow = '0 0 6px var(--green)'; }
+}
+
+window.addEventListener('online',  () => { updateHealth(); loadAllIframes(); });
+window.addEventListener('offline', updateHealth);
+
+// ── IFRAMES ───────────────────────────────────────────────────────
+
+let loadLock = false;
+
+async function loadAllIframes() {
+  if (loadLock) return;
+  loadLock = true;
+  for (let i = 0; i < iframeEls.length; i++) {
+    await loadIframe(i);
+    if (i < iframeEls.length - 1) await wait(5000); // stagger 5s
+  }
+  loadLock = false;
+}
+
+function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function loadIframe(idx) {
+  return new Promise(resolve => {
+    const iframe   = iframeEls[idx];
+    const overlay  = document.getElementById(`overlay${idx}`);
+    let tries = 0;
+
+    function attempt() {
+      updateHealth();
+      tries++;
+      if (!navigator.onLine) { setTimeout(attempt, 5000); return; }
+
+      overlay.classList.remove('hidden');
+      iframe.classList.remove('loaded');
+
+      const url = iframe.dataset.src + (iframe.dataset.src.includes('?') ? '&' : '?') + '_t=' + Date.now();
+      iframe.src = url;
+
+      const timer = setTimeout(() => {
+        iframe.src = 'about:blank';
+        if (tries < 4) setTimeout(attempt, 3000);
+        else setTimeout(attempt, 30000); // long backoff after 4 failures
+      }, 40000);
+
+      iframe.onload = () => {
+        clearTimeout(timer);
+        overlay.classList.add('hidden');
+        iframe.classList.add('loaded');
+        iframe.dataset.lastSuccess = Date.now();
+        updateHealth();
+        resolve();
+      };
+      iframe.onerror = () => { clearTimeout(timer); setTimeout(attempt, 5000); };
+    }
+    attempt();
+  });
+}
+
+// Stale-check every 10 minutes
+setInterval(() => {
+  const staleMs = CONFIG.iframeStaleHours * 3600 * 1000;
+  iframeEls.forEach((f, i) => {
+    if (Date.now() - (f.dataset.lastSuccess || 0) > staleMs) loadIframe(i);
+  });
+  updateHealth();
+}, 10 * 60 * 1000);
+
+// ── MIDDAY RELOAD ─────────────────────────────────────────────────
+
+if (CONFIG.reloadAtHour > 0) {
+  function scheduleReload() {
+    const now  = new Date();
+    const next = new Date();
+    next.setHours(CONFIG.reloadAtHour, 0, 0, 0);
+    if (now >= next) next.setDate(next.getDate() + 1);
+    setTimeout(() => location.reload(), next - now);
+  }
+  scheduleReload();
+}
+
+// ── START ─────────────────────────────────────────────────────────
+
+window.addEventListener('load', () => {
+  setTimeout(loadAllIframes, 800);
+});
+
+</script>
+</body>
+</html>
